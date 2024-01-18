@@ -17,6 +17,13 @@ from databricks.labs.ucx.workspace_access.secrets import SecretScopesSupport
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PermissionVerification:
+    object_id: str
+    object_type: str
+    raw: str
+
+
 class VerificationManager:
     def __init__(self, ws: WorkspaceClient, secrets_support: SecretScopesSupport, cfg: WorkspaceConfig):
         from pyspark.sql.session import SparkSession  # type: ignore[import-not-found]
