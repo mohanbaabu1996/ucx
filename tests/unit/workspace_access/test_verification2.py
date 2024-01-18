@@ -1,5 +1,5 @@
-from unittest.mock import Mock
-
+from unittest.mock import Mock, patch
+import os, sys
 import pytest
 
 from databricks.labs.ucx.workspace_access.verification import VerificationManager
@@ -238,3 +238,39 @@ def test_verify_applied_permissions_assertionerror(mocker):
     # assertions run in the method
     with pytest.raises(AssertionError):
         vm.verify_applied_permissions("pipelines", "1234", mock_migration_state, "account")
+
+
+def test_verify_schema_permissions(mocker):
+    mock_permissions = [
+        Mock(object_type='DATABASE', object_id='schema1', raw='{"principal": "user1", "action_type": "SELECT"}')
+    ]
+    mocker.patch(
+        'databricks.labs.ucx.workspace_access.verification.VerificationManager.get_all_permissions',
+        return_value=mock_permissions,
+    )
+
+    mocker.patch(
+        'databricks.labs.ucx.workspace_access.verification.VerificationManager._get_schema_list',
+        return_value=['schema1'],
+    )
+
+    mock_df = Mock()
+    mock_row = Mock(Principal='user1', ActionType='SELECT')
+    mock_df.collect.return_value = [mock_row]
+    pyspark_sql_session = Mock()
+    sys.modules["pyspark.sql.session"] = pyspark_sql_session
+    pyspark_sql_session.SparkSession.builder.getOrCreate.return_value.sql.return_value = mock_df
+    ws = mocker.patch("databricks.sdk.WorkspaceClient.__init__")
+    ss = Mock()
+    ws_config = Mock()
+
+    with patch.dict(os.environ, {"DATABRICKS_RUNTIME_VERSION": "14.0"}):
+        vm = VerificationManager(ws, ss, ws_config)
+
+    # this one contains the assertions
+    vm.verify_schema_permissions()
+
+    vm.get_all_permissions.assert_called_once()
+    vm._get_schema_list.assert_called_once()
+    vm._spark.sql.assert_called_once_with('SHOW GRANTS ON SCHEMA schema1')
+    mock_df.collect.assert_called_once()

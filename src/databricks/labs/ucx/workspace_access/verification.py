@@ -1,4 +1,7 @@
 import logging
+import os
+import itertools
+import json
 from typing import Literal
 
 from databricks.sdk import WorkspaceClient
@@ -17,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 class VerificationManager:
     def __init__(self, ws: WorkspaceClient, secrets_support: SecretScopesSupport, cfg: WorkspaceConfig):
+        from pyspark.sql.session import SparkSession  # type: ignore[import-not-found]
+
+        if "DATABRICKS_RUNTIME_VERSION" not in os.environ:
+            msg = "Not in the Databricks Runtime"
+            raise RuntimeError(msg)
+
+        self._spark = SparkSession.builder.getOrCreate()
+
         self._ws = ws
         self._secrets_support = secrets_support
         self._cfg = cfg
@@ -31,6 +42,8 @@ class VerificationManager:
             else:
                 self.verify_applied_permissions(object_type, object_id, migration_state, target)
         self.verify_roles_entitlements_members(migration_state, target)
+        self.verify_schema_permissions()
+        self.verify_table_permissions()
 
     def verify_applied_permissions(
         self,
@@ -101,21 +114,93 @@ class VerificationManager:
             assert base_group_info.entitlements == target_group_info.entitlements
             assert base_group_info.members == target_group_info.members
 
-    def get_permissions_to_verify(self):
-        # pm = PermissionManager.factory(
-        #     self._ws,
-        #     RuntimeBackend(),
-        #     self._cfg.inventory_database,
-        #     num_threads=self._cfg.num_threads,
-        #     workspace_start_path=self._cfg.workspace_start_path,
-        # )
-        pm = PermissionManager(self._sql_backend, self._cfg.inventory_database, [])
-        permissions = pm.load_all()
+    def _get_schema_list(self):
+        schemas = self._spark.sql("SHOW DATABASES IN hive_metastore").collect()
+        schema_list = [
+            "hive_metastore" + "." + schema.databaseName
+            for schema in schemas
+            if schema.databaseName not in ["informationSchema", "ucx"]
+            and not self._spark.sql(f"SHOW TABLES IN hive_metastore.{schema.databaseName}").isEmpty()
+        ]
+        return schema_list
 
-        return [(p.object_type, p.object_id) for p in permissions]
+    def _get_table_list(self):
+        schema_list = self._get_schema_list()
+        table_list = []
+        for schema in schema_list:
+            tables = self._spark.sql(f"SHOW TABLES IN {schema}").collect()
+            table_list += [f"{schema}.{table.tableName}" for table in tables]
+        return table_list
+
+    def verify_schema_permissions(self):
+        database_permissions = [p for p in self.get_all_permissions() if p.object_type == "DATABASE"]
+
+        schema_list = self._get_schema_list()
+
+        for schema in schema_list:
+            # existing permissions
+            permissions_existing_rowlist = self._spark.sql(f"SHOW GRANTS ON SCHEMA {schema}").collect()
+            permissions_existing = [
+                permission.Principal + "." + permission.ActionType for permission in permissions_existing_rowlist
+            ]
+
+            # permissions to migrate
+            permissions_to_migrate_list = [p.raw for p in database_permissions if p.object_id == schema]
+            permissions_to_migrate_raw = [json.loads(permission) for permission in permissions_to_migrate_list]
+            permissions_to_migrate_lol = [
+                [permission.get("principal") + "." + p.strip() for p in permission.get("action_type").split(",")]
+                for permission in permissions_to_migrate_raw
+            ]
+            permissions_to_migrate = list(itertools.chain(*permissions_to_migrate_lol))
+
+            try:
+                assert len(permissions_existing) >= len(permissions_to_migrate)
+            except AssertionError:
+                print(f"Not all permissions migrated in {schema}")
+
+            for permission in permissions_to_migrate:
+                try:
+                    assert permission in permissions_existing
+                except AssertionError:
+                    print(f"Permission: {permission} not granted in {schema}.")
+
+    def verify_table_permissions(self):
+        table_permissions = [p for p in self.get_all_permissions() if p.object_type == "TABLE"]
+        table_list = self._get_table_list()
+
+        for table in table_list:
+            # existing permissions
+            permissions_existing = self._spark.sql(f"SHOW GRANTS ON {table}").collect()
+            permissions_existing = [
+                permission.Principal + "." + permission.ActionType for permission in permissions_existing
+            ]
+
+            # permissions to migrate
+            permissions_to_migrate_list = [p.raw for p in table_permissions if p.object_id == table]
+            permissions_to_migrate_raw = [json.loads(permission.raw) for permission in permissions_to_migrate_list]
+            permissions_to_migrate_lol = [
+                [permission.get("principal") + "." + p.strip() for p in permission.get("action_type").split(",")]
+                for permission in permissions_to_migrate_raw
+            ]
+            permissions_to_migrate = list(itertools.chain(*permissions_to_migrate_lol))
+
+            try:
+                assert len(permissions_existing) >= len(permissions_to_migrate)
+            except AssertionError:
+                print(f"Not all permissions migrated in table: {table}")
+
+            for permission in permissions_to_migrate:
+                try:
+                    assert permission in permissions_existing
+                except AssertionError:
+                    print(f"Permission: {permission} not granted in {table}")
+
+    def get_all_permissions(self):
+        pm = PermissionManager(self._sql_backend, self._cfg.inventory_database, [])
+        return pm.load_all()
 
     def run(self, migration_state: MigrationState):
-        permissions_to_verify = self.get_permissions_to_verify()
+        permissions_to_verify = [(p.object_type, p.object_id) for p in self.get_all_permissions()]
         # group_manager = GroupManager(
         #     self._sql_backend,
         #     self._ws,
