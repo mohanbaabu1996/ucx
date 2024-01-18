@@ -2,14 +2,13 @@ import logging
 import os
 import itertools
 import json
+from dataclasses import dataclass
 from typing import Literal
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import PermissionDenied
 
 from databricks.labs.ucx.config import WorkspaceConfig
-
-# from databricks.labs.ucx.framework.crawlers import RuntimeBackend
 from databricks.labs.ucx.framework.crawlers import StatementExecutionBackend
 from databricks.labs.ucx.workspace_access.groups import MigrationState
 from databricks.labs.ucx.workspace_access.manager import PermissionManager
@@ -27,7 +26,6 @@ class VerificationManager:
             raise RuntimeError(msg)
 
         self._spark = SparkSession.builder.getOrCreate()
-
         self._ws = ws
         self._secrets_support = secrets_support
         self._cfg = cfg
@@ -143,10 +141,11 @@ class VerificationManager:
             permissions_existing = [
                 permission.Principal + "." + permission.ActionType for permission in permissions_existing_rowlist
             ]
+            print(permissions_existing)
 
             # permissions to migrate
             permissions_to_migrate_list = [p.raw for p in database_permissions if p.object_id == schema]
-            permissions_to_migrate_raw = [json.loads(permission) for permission in permissions_to_migrate_list]
+            permissions_to_migrate_raw = [json.loads(raw) for raw in permissions_to_migrate_list]
             permissions_to_migrate_lol = [
                 [permission.get("principal") + "." + p.strip() for p in permission.get("action_type").split(",")]
                 for permission in permissions_to_migrate_raw
@@ -156,12 +155,14 @@ class VerificationManager:
             try:
                 assert len(permissions_existing) >= len(permissions_to_migrate)
             except AssertionError:
+                raise AssertionError(f"Not all permissions migrated in {schema}")
                 print(f"Not all permissions migrated in {schema}")
 
             for permission in permissions_to_migrate:
                 try:
                     assert permission in permissions_existing
                 except AssertionError:
+                    raise AssertionError(f"Permission: {permission} not granted in {schema}")
                     print(f"Permission: {permission} not granted in {schema}.")
 
     def verify_table_permissions(self):
@@ -177,7 +178,7 @@ class VerificationManager:
 
             # permissions to migrate
             permissions_to_migrate_list = [p.raw for p in table_permissions if p.object_id == table]
-            permissions_to_migrate_raw = [json.loads(permission.raw) for permission in permissions_to_migrate_list]
+            permissions_to_migrate_raw = [json.loads(raw) for raw in permissions_to_migrate_list]
             permissions_to_migrate_lol = [
                 [permission.get("principal") + "." + p.strip() for p in permission.get("action_type").split(",")]
                 for permission in permissions_to_migrate_raw
@@ -187,12 +188,14 @@ class VerificationManager:
             try:
                 assert len(permissions_existing) >= len(permissions_to_migrate)
             except AssertionError:
-                print(f"Not all permissions migrated in table: {table}")
+                raise AssertionError(f"Not all permissions migrated in {table}")
+                print(f"Not all permissions migrated in {table}")
 
             for permission in permissions_to_migrate:
                 try:
                     assert permission in permissions_existing
                 except AssertionError:
+                    raise AssertionError(f"Permission: {permission} not granted in {table}")
                     print(f"Permission: {permission} not granted in {table}")
 
     def get_all_permissions(self):
