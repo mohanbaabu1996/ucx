@@ -382,6 +382,25 @@ class WorkspaceInstaller:
                     yield policy
                     break
 
+    def check_installation_conflicts(self, inventory_database) -> bool:
+        logger.info("Checking current installations....")
+
+        all_users = []
+        for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
+            config = installation.load(WorkspaceConfig)
+            all_users.append(
+                {
+                    'database': config.inventory_database,
+                    'path': installation.install_folder(),
+                    'warehouse_id': config.warehouse_id,
+                }
+            )
+
+        for user in all_users:
+            if inventory_database == user['database']:
+                return True
+        return False
+
 
 class WorkspaceInstallation:
     def __init__(
