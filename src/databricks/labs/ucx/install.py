@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from databricks.labs.blueprint.entrypoint import get_logger
-from databricks.labs.blueprint.installation import Installation
+from databricks.labs.blueprint.installation import Installation, NotInstalled
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.parallel import ManyError, Threads
 from databricks.labs.blueprint.tui import Prompts
@@ -178,6 +178,7 @@ class WorkspaceInstaller:
         self._installation = installation
         self._prompts = prompts
         self._install_location = "/Applications/ucx"
+        self._existing_database_names: list[str] = []
 
     def run(
         self,
@@ -186,6 +187,7 @@ class WorkspaceInstaller:
         wheel_builder_factory: Callable[[], WheelsV2] | None = None,
     ):
         logger.info(f"Installing UCX v{PRODUCT_INFO.version()}")
+        self._get_existing_database_names()
         config = self.configure()
         if not sql_backend_factory:
             sql_backend_factory = self._new_sql_backend
@@ -277,7 +279,6 @@ class WorkspaceInstaller:
             policy_id=policy_id,
             is_terraform_used=is_terraform_used,
         )
-        self._installation = Installation(self._ws, PRODUCT_INFO.product_name(), install_folder=self._install_location)
         self._installation.save(config)
         ws_file_url = self._installation.workspace_link(config.__file__)
         if self._prompts.confirm(f"Open config file in the browser and continue installing? {ws_file_url}"):
@@ -384,13 +385,27 @@ class WorkspaceInstaller:
                     yield policy
                     break
 
-    def _check_inventory_database_exists(self, inventory_database) -> bool:
+    # def _check_inventory_database_exists(self, inventory_database) -> bool:
+    #     logger.info("Checking current installations....")
+    #     for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
+    #         config = installation.load(WorkspaceConfig)
+    #         if inventory_database == config.inventory_database:
+    #             return True
+    #     return False
+
+    def _check_root_install_exists(self) -> bool:
         logger.info("Checking current installations....")
+        try:
+            if self._install_location == Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder():
+                return True
+            return False
+        except NotInstalled:
+            return False
+
+    def _get_existing_database_names(self):
         for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
             config = installation.load(WorkspaceConfig)
-            if inventory_database == config.inventory_database:
-                return True
-        return False
+            self._existing_database_names.append(config.inventory_database)
 
 
 class WorkspaceInstallation:
