@@ -177,6 +177,7 @@ class WorkspaceInstaller:
         self._ws = ws
         self._installation = installation
         self._prompts = prompts
+        self._install_location = "/Applications/ucx"
 
     def run(
         self,
@@ -276,6 +277,7 @@ class WorkspaceInstaller:
             policy_id=policy_id,
             is_terraform_used=is_terraform_used,
         )
+        self._installation = Installation(self._ws, PRODUCT_INFO.product_name(), install_folder=self._install_location)
         self._installation.save(config)
         ws_file_url = self._installation.workspace_link(config.__file__)
         if self._prompts.confirm(f"Open config file in the browser and continue installing? {ws_file_url}"):
@@ -382,22 +384,11 @@ class WorkspaceInstaller:
                     yield policy
                     break
 
-    def check_installation_conflicts(self, inventory_database) -> bool:
+    def _check_inventory_database_exists(self, inventory_database) -> bool:
         logger.info("Checking current installations....")
-
-        all_users = []
         for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
             config = installation.load(WorkspaceConfig)
-            all_users.append(
-                {
-                    'database': config.inventory_database,
-                    'path': installation.install_folder(),
-                    'warehouse_id': config.warehouse_id,
-                }
-            )
-
-        for user in all_users:
-            if inventory_database == user['database']:
+            if inventory_database == config.inventory_database:
                 return True
         return False
 
