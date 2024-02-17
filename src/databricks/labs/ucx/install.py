@@ -385,14 +385,6 @@ class WorkspaceInstaller:
                     yield policy
                     break
 
-    # def _check_inventory_database_exists(self, inventory_database) -> bool:
-    #     logger.info("Checking current installations....")
-    #     for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
-    #         config = installation.load(WorkspaceConfig)
-    #         if inventory_database == config.inventory_database:
-    #             return True
-    #     return False
-
     def _check_root_install_exists(self) -> bool:
         logger.info("Checking current installations....")
         try:
