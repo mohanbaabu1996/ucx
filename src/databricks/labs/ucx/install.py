@@ -177,8 +177,13 @@ class WorkspaceInstaller:
         self._ws = ws
         self._installation = installation
         self._prompts = prompts
-        self._install_location = "/Applications/ucx"
-        self._existing_database_names: list[str] = []
+        self._install_location = installation.install_folder()
+        self._existing_database_names = []
+
+    def _get_existing_database_names(self):
+        for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
+            config = installation.load(WorkspaceConfig)
+            self._existing_database_names.append(config.inventory_database)
 
     def run(
         self,
@@ -235,11 +240,38 @@ class WorkspaceInstaller:
     def _configure_new_installation(self) -> WorkspaceConfig:
         logger.info("Please answer a couple of questions to configure Unity Catalog migration")
         HiveMetastoreLineageEnabler(self._ws).apply(self._prompts)
+        me = self._ws.current_user.me()
+        product = PRODUCT_INFO.product_name()
+
         inventory_database = self._prompts.question(
             "Inventory Database stored in hive_metastore", default="ucx", valid_regex=r"^\w+$"
         )
 
         warehouse_id = self._configure_warehouse()
+        if inventory_database in self._existing_database_names:
+            raise RuntimeWarning(f"Inventory database with name {inventory_database} already exists")
+
+        def warehouse_type(_):
+            return _.warehouse_type.value if not _.enable_serverless_compute else "SERVERLESS"
+
+        pro_warehouses = {"[Create new PRO SQL warehouse]": "create_new"} | {
+            f"{_.name} ({_.id}, {warehouse_type(_)}, {_.state.value})": _.id
+            for _ in self._ws.warehouses.list()
+            if _.warehouse_type == EndpointInfoWarehouseType.PRO
+        }
+        warehouse_id = self._prompts.choice_from_dict(
+            "Select PRO or SERVERLESS SQL warehouse to run assessment dashboards on", pro_warehouses
+        )
+        if warehouse_id == "create_new":
+            new_warehouse = self._ws.warehouses.create(
+                name=f"{WAREHOUSE_PREFIX} {time.time_ns()}",
+                spot_instance_policy=SpotInstancePolicy.COST_OPTIMIZED,
+                warehouse_type=CreateWarehouseRequestWarehouseType.PRO,
+                cluster_size="Small",
+                max_num_clusters=1,
+            )
+            warehouse_id = new_warehouse.id
+
         configure_groups = ConfigureGroups(self._prompts)
         configure_groups.run()
         log_level = self._prompts.question("Log level", default="INFO").upper()
@@ -284,6 +316,41 @@ class WorkspaceInstaller:
         if self._prompts.confirm(f"Open config file in the browser and continue installing? {ws_file_url}"):
             webbrowser.open(ws_file_url)
         return config
+
+    def _get_existing_installation(self):
+        product = PRODUCT_INFO.product_name()
+        if not self._is_global() and not self._is_user():
+        # no global or user installation then default install location is global
+            self._installation = Installation(self._ws, product, install_folder=self._install_location)
+        elif self._is_global():
+            self._installation = Installation.current(self._ws, product)
+            self._install_location = self._installation.install_folder()
+            # global installation is the latest
+            if not os.environ.get('UCX_FORCE_INSTALL', '').lower() == 'user':
+                # no user installation override then return current to upgrade global install
+                return self._installation.load(WorkspaceConfig)
+            else:
+                # user installation override
+                msg = "[ADVANCED] UCX is already installed on this workspace. Do you want to create a user-specific installation?"
+                if self._prompts.confirm(msg):
+                    self._install_location = f"/Users/{me.user_name}/.{product}"
+                else:
+                    raise RuntimeWarning("Existing global install and user installation override, but no confirmation")
+        elif self._is_user():
+            # user installation is the latest
+            if not os.environ.get('UCX_FORCE_INSTALL', '').lower() == 'global':
+                # no global installation override then return current to upgrade user install
+                return self._installation.load(WorkspaceConfig)
+            else:
+                # global installation override
+                msg = "[ADVANCED] UCX is already installed on this workspace. Do you want to create a global installation?"
+                if not self._prompts.confirm(msg):
+                    raise RuntimeWarning("Existing user install and global installation override, but no confirmation")
+                else:
+                    # migration logic here
+                    migrated_installation = Installation.current(self._ws, product, install_folder="/Applications/ucx")
+                    migrated_installation.save(self._installation.load(WorkspaceConfig))
+                    self._installation = migrated_installation
 
     def _configure_warehouse(self):
         def warehouse_type(_):
@@ -391,6 +458,20 @@ class WorkspaceInstaller:
             if self._install_location == Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder():
                 return True
             return False
+        except NotInstalled:
+            return False
+
+    # TODO:
+    # move this to blueprint
+    def _is_global(self):
+        try:
+            return Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder().startswith("/Applications")
+        except NotInstalled:
+            return False
+
+    def _is_user(self):
+        try:
+            return Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder().startswith("/Users")
         except NotInstalled:
             return False
 
