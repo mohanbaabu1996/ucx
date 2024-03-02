@@ -177,7 +177,6 @@ class WorkspaceInstaller:
         self._ws = ws
         self._installation = installation
         self._prompts = prompts
-        self._install_location = installation.install_folder()
         self._existing_database_names = []
 
     def _get_existing_database_names(self):
@@ -240,8 +239,6 @@ class WorkspaceInstaller:
     def _configure_new_installation(self) -> WorkspaceConfig:
         logger.info("Please answer a couple of questions to configure Unity Catalog migration")
         HiveMetastoreLineageEnabler(self._ws).apply(self._prompts)
-        me = self._ws.current_user.me()
-        product = PRODUCT_INFO.product_name()
 
         inventory_database = self._prompts.question(
             "Inventory Database stored in hive_metastore", default="ucx", valid_regex=r"^\w+$"
@@ -250,6 +247,13 @@ class WorkspaceInstaller:
         warehouse_id = self._configure_warehouse()
         if inventory_database in self._existing_database_names:
             raise RuntimeWarning(f"Inventory database with name {inventory_database} already exists")
+
+
+        # If there is a previous installation, return corresponding WorkspaceConfig
+        # Else configure will create WorkspaceConfig for a fresh install
+        if self._is_global() or self._is_user():
+            # no global or user installation then default install location is global
+            return self._get_existing_installation()
 
         def warehouse_type(_):
             return _.warehouse_type.value if not _.enable_serverless_compute else "SERVERLESS"
@@ -479,6 +483,40 @@ class WorkspaceInstaller:
         for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
             config = installation.load(WorkspaceConfig)
             self._existing_database_names.append(config.inventory_database)
+
+    def _get_existing_installation(self):
+        me = self._ws.current_user.me()
+        product = PRODUCT_INFO.product_name()
+
+        if self._is_global():
+            self._installation = Installation.current(self._ws, product)
+            # self._install_location = self._installation.install_folder()
+            # global installation is the latest
+            if not os.environ.get('UCX_FORCE_INSTALL', '').lower() == 'user':
+                # no user installation override then return current to upgrade global install
+                return Installation.assume_global(self._ws, product).load(WorkspaceConfig)
+            # user installation override
+            msg = ("[ADVANCED] UCX is already installed on this workspace. "
+                   "Do you want to create a user-specific installation?")
+            if self._prompts.confirm(msg):
+                return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
+            else:
+                raise RuntimeWarning("Existing global install and user installation override, but no confirmation")
+        elif self._is_user():
+            # user installation is the latest
+            if not os.environ.get('UCX_FORCE_INSTALL', '').lower() == 'global':
+                # no global installation override then return current to upgrade user install
+                return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
+            else:
+                # global installation override
+                msg = ("[ADVANCED] UCX is already installed on this workspace. "
+                       "Do you want to create a global installation?")
+                if not self._prompts.confirm(msg):
+                    raise RuntimeWarning("Existing user install and global installation override, but no confirmation")
+                else:
+                    # TODO: Migrate logic here
+                    raise RuntimeWarning("Existing user install and global installation override"
+                                         "Need to uninstall and re-install here now")
 
 
 class WorkspaceInstallation:
@@ -1155,6 +1193,6 @@ if __name__ == "__main__":
     logger.setLevel("INFO")
 
     workspace_client = WorkspaceClient(product="ucx", product_version=__version__)
-    current = Installation(workspace_client, PRODUCT_INFO.product_name())
+    current = Installation(workspace_client, PRODUCT_INFO.product_name(), install_folder='/Applications/ucx')
     installer = WorkspaceInstaller(Prompts(), current, workspace_client)
     installer.run()
