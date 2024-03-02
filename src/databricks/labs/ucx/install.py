@@ -177,7 +177,7 @@ class WorkspaceInstaller:
         self._ws = ws
         self._installation = installation
         self._prompts = prompts
-        self._existing_database_names = []
+        self._existing_database_names = list[str]
 
     def _get_existing_database_names(self):
         for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
@@ -456,20 +456,13 @@ class WorkspaceInstaller:
                     yield policy
                     break
 
-    def _check_root_install_exists(self) -> bool:
-        logger.info("Checking current installations....")
-        try:
-            if self._install_location == Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder():
-                return True
-            return False
-        except NotInstalled:
-            return False
-
     # TODO:
     # move this to blueprint
     def _is_global(self):
         try:
-            return Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder().startswith("/Applications")
+            return (
+                Installation.current(self._ws, PRODUCT_INFO.product_name()).install_folder().startswith("/Applications")
+            )
         except NotInstalled:
             return False
 
@@ -479,11 +472,6 @@ class WorkspaceInstaller:
         except NotInstalled:
             return False
 
-    def _get_existing_database_names(self):
-        for installation in self._installation.existing(self._ws, PRODUCT_INFO.product_name()):
-            config = installation.load(WorkspaceConfig)
-            self._existing_database_names.append(config.inventory_database)
-
     def _get_existing_installation(self):
         product = PRODUCT_INFO.product_name()
 
@@ -491,31 +479,32 @@ class WorkspaceInstaller:
             self._installation = Installation.current(self._ws, product)
             # self._install_location = self._installation.install_folder()
             # global installation is the latest
-            if not os.environ.get('UCX_FORCE_INSTALL', '').lower() == 'user':
+            if os.environ.get('UCX_FORCE_INSTALL', '').lower() != 'user':
                 # no user installation override then return current to upgrade global install
                 return Installation.assume_global(self._ws, product).load(WorkspaceConfig)
             # user installation override
-            msg = ("[ADVANCED] UCX is already installed on this workspace. "
-                   "Do you want to create a user-specific installation?")
+            msg = (
+                "[ADVANCED] UCX is already installed on this workspace. "
+                "Do you want to create a user-specific installation?"
+            )
             if self._prompts.confirm(msg):
                 return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
-            else:
-                raise RuntimeWarning("Existing global install and user installation override, but no confirmation")
-        elif self._is_user():
-            # user installation is the latest
-            if not os.environ.get('UCX_FORCE_INSTALL', '').lower() == 'global':
-                # no global installation override then return current to upgrade user install
-                return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
-            else:
-                # global installation override
-                msg = ("[ADVANCED] UCX is already installed on this workspace. "
-                       "Do you want to create a global installation?")
-                if not self._prompts.confirm(msg):
-                    raise RuntimeWarning("Existing user install and global installation override, but no confirmation")
-                else:
-                    # TODO: Migrate logic here
-                    raise RuntimeWarning("Existing user install and global installation override"
-                                         "Need to uninstall and re-install here now")
+            raise RuntimeWarning("Existing global install and user installation override, but no confirmation")
+
+        # user installation is the latest
+        if os.environ.get('UCX_FORCE_INSTALL', '').lower() != 'global':
+            # no global installation override then return current to upgrade user install
+            return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
+
+        # global installation override
+        msg = "[ADVANCED] UCX is already installed on this workspace. Do you want to create a global installation?"
+        if not self._prompts.confirm(msg):
+            raise RuntimeWarning("Existing user install and global installation override, but no confirmation")
+
+        # TODO: Migrate logic here
+        raise RuntimeWarning(
+            "Existing user install and global installation override. Need to uninstall and re-install here now"
+        )
 
 
 class WorkspaceInstallation:
