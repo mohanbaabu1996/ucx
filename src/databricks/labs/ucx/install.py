@@ -485,7 +485,6 @@ class WorkspaceInstaller:
             self._existing_database_names.append(config.inventory_database)
 
     def _get_existing_installation(self):
-        me = self._ws.current_user.me()
         product = PRODUCT_INFO.product_name()
 
         if self._is_global():
