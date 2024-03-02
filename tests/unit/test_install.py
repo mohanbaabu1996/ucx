@@ -133,6 +133,11 @@ def any_prompt():
     return MockPrompts({".*": ""})
 
 
+def not_found(_):
+    msg = "save_config"
+    raise NotFound(msg)
+
+
 def test_create_database(ws, caplog, mock_installation, any_prompt):
     sql_backend = MockBackend(
         fails_on_first={'CREATE TABLE': '[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable is incorrect'}
@@ -388,10 +393,6 @@ def test_run_workflow_creates_failure_many_error(ws, mocker, any_prompt, mock_in
 
 
 def test_save_config(ws, mock_installation):
-    def not_found(_):
-        msg = "save_config"
-        raise NotFound(msg)
-
     ws.workspace.get_status = not_found
     ws.warehouses.list = lambda **_: [
         EndpointInfo(name="abc", id="abc", warehouse_type=EndpointInfoWarehouseType.PRO, state=State.RUNNING)
@@ -435,6 +436,7 @@ def test_save_config_strip_group_names(ws, mock_installation):
             r".*": "",
         }
     )
+    ws.workspace.get_status = not_found
 
     install = WorkspaceInstaller(prompts, mock_installation, ws)
     install.configure()
@@ -461,6 +463,8 @@ def test_cluster_policy_definition_present_reuse(ws, mock_installation):
     ws.config.is_aws = False
     ws.config.is_azure = True
     ws.config.is_gcp = False
+    ws.workspace.get_status = not_found
+
     ws.cluster_policies.list.return_value = [
         Policy(
             policy_id="foo1",
@@ -500,6 +504,7 @@ def test_cluster_policy_definition_present_reuse(ws, mock_installation):
 
 
 def test_cluster_policy_definition_azure_hms(ws, mock_installation):
+    ws.workspace.get_status = not_found
     ws.config.is_aws = False
     ws.config.is_azure = True
     ws.config.is_gcp = False
@@ -552,6 +557,7 @@ def test_cluster_policy_definition_azure_hms(ws, mock_installation):
 
 
 def test_cluster_policy_definition_aws_glue(ws, mock_installation):
+    ws.workspace.get_status = not_found
     ws.config.is_aws = True
     ws.config.is_azure = False
     ws.config.is_gcp = False
@@ -598,6 +604,8 @@ def test_cluster_policy_definition_gcp(ws, mock_installation):
     ws.config.is_aws = False
     ws.config.is_azure = False
     ws.config.is_gcp = True
+    ws.workspace.get_status = not_found
+
     policy_definition = {
         "spark_conf.spark.hadoop.javax.jdo.option.ConnectionURL": {"value": "url"},
         "spark_conf.spark.hadoop.javax.jdo.option.ConnectionUserName": {"value": "user1"},
@@ -733,6 +741,7 @@ def test_save_config_with_custom_policy(ws, mock_installation):
             r".*": "",
         }
     )
+    ws.workspace.get_status = not_found
 
     install = WorkspaceInstaller(prompts, mock_installation, ws)
     install.configure()
@@ -784,6 +793,7 @@ def test_save_config_with_glue(ws, mock_installation):
         }
     )
 
+    ws.workspace.get_status = not_found
     install = WorkspaceInstaller(prompts, mock_installation, ws)
     install.configure()
 
@@ -1334,6 +1344,7 @@ def test_open_config(ws, mocker, mock_installation):
             r".*": "",
         }
     )
+    ws.workspace.get_status = not_found
 
     install = WorkspaceInstaller(prompts, mock_installation, ws)
     install.configure()
@@ -1392,3 +1403,4 @@ def test_runs_upgrades_on_more_recent_version(ws, any_prompt):
     )
 
     existing_installation.assert_file_uploaded('logs/README.md')
+
