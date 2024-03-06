@@ -13,6 +13,7 @@ from databricks.labs.ucx.cli import (
     alias,
     create_account_groups,
     create_table_mapping,
+    create_uber_principal,
     ensure_assessment_run,
     installations,
     manual_workspace_info,
@@ -339,3 +340,31 @@ def test_migrate_aws_instance_profiles_no_profile(ws, caplog, mocker):
     ws.config.is_aws = True
     migrate_credentials(ws)
     assert any({"AWS Profile is not specified." in message for message in caplog.messages})
+
+
+def test_create_master_principal_not_azure(ws):
+    ws.config.is_azure = False
+    create_uber_principal(ws, subscription_id="")
+    ws.workspace.get_status.assert_not_called()
+
+
+def test_create_master_principal_no_azure_cli(ws):
+    ws.config.auth_type = "azure_clis"
+    ws.config.is_azure = True
+    create_uber_principal(ws, subscription_id="")
+    ws.workspace.get_status.assert_not_called()
+
+
+def test_create_master_principal_no_subscription(ws):
+    ws.config.auth_type = "azure-cli"
+    ws.config.is_azure = True
+    create_uber_principal(ws, subscription_id="")
+    ws.workspace.get_status.assert_not_called()
+
+
+def test_create_master_principal(ws):
+    ws.config.auth_type = "azure-cli"
+    ws.config.is_azure = True
+    with patch("databricks.labs.blueprint.tui.Prompts.question", return_value=True):
+        with pytest.raises(ValueError):
+            create_uber_principal(ws, subscription_id="12")

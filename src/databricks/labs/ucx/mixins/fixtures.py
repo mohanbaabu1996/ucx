@@ -1163,3 +1163,47 @@ def make_feature_table(ws, make_random):
             logger.info(f"Can't remove feature table {e}")
 
     yield from factory("Feature table", create, remove)
+
+
+@pytest.fixture
+def make_serving_endpoint(ws, make_random, make_model):
+    def create() -> Wait[ServingEndpointDetailed]:
+        endpoint_name = make_random(4)
+        model = make_model()
+        endpoint = ws.serving_endpoints.create(
+            endpoint_name,
+            EndpointCoreConfigInput(
+                served_models=[
+                    ServedModelInput(model.name, "1", ServedModelInputWorkloadSize.SMALL, scale_to_zero_enabled=True)
+                ]
+            ),
+        )
+        return endpoint
+
+    def remove(endpoint_name: str):
+        try:
+            ws.serving_endpoints.delete(endpoint_name)
+        except RuntimeError as e:
+            logger.info(f"Can't remove endpoint {e}")
+
+    yield from factory("Serving endpoint", create, remove)
+
+
+@pytest.fixture
+def make_feature_table(ws, make_random):
+    def create():
+        feature_table_name = make_random(6) + "." + make_random(6)
+        table = ws.api_client.do(
+            "POST",
+            "/api/2.0/feature-store/feature-tables/create",
+            body={"name": feature_table_name, "primary_keys": [{"name": "pk", "data_type": "string"}]},
+        )
+        return table['feature_table']
+
+    def remove(table: dict):
+        try:
+            ws.api_client.do("DELETE", "/api/2.0/feature-store/feature-tables/delete", body={"name": table["name"]})
+        except RuntimeError as e:
+            logger.info(f"Can't remove feature table {e}")
+
+    yield from factory("Feature table", create, remove)
