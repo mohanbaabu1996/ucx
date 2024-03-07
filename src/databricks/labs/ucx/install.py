@@ -240,22 +240,29 @@ class WorkspaceInstaller:
         logger.info("Please answer a couple of questions to configure Unity Catalog migration")
         HiveMetastoreLineageEnabler(self._ws).apply(self._prompts)
 
+        # TODO adjust this to the new installation logic
+        # # If there is a previous installation, return corresponding WorkspaceConfig
+        # # Else configure will create WorkspaceConfig for a fresh install
+        # type_of_installation = "new"
+        #
+        # if self._is_global() or self._is_user():
+        #     # no global or user installation then default install location is global
+        #     self._installation, type_of_installation = self._get_existing_installation()
+        #
+        # if type_of_installation != "new":
+        #     return self._installation.load(WorkspaceConfig)
+
         inventory_database = self._prompts.question(
             "Inventory Database stored in hive_metastore", default="ucx", valid_regex=r"^\w+$"
         )
+        #
+        # if self._check_inventory_database_exists(inventory_database):
+        #     raise RuntimeWarning(f"Inventory database with name {inventory_database} already exists")
 
         warehouse_id = self._configure_warehouse()
-        if inventory_database in self._existing_database_names:
-            raise RuntimeWarning(f"Inventory database with name {inventory_database} already exists")
 
-        if self._check_inventory_database_exists(inventory_database):
-            raise RuntimeWarning(f"Inventory database with name {inventory_database} already exists")
-
-        # If there is a previous installation, return corresponding WorkspaceConfig
-        # Else configure will create WorkspaceConfig for a fresh install
-        if self._is_global() or self._is_user():
-            # no global or user installation then default install location is global
-            return self._get_existing_installation()
+        logger.info("Please answer a couple of questions to configure Unity Catalog migration")
+        HiveMetastoreLineageEnabler(self._ws).apply(self._prompts)
 
         def warehouse_type(_):
             return _.warehouse_type.value if not _.enable_serverless_compute else "SERVERLESS"
@@ -325,6 +332,7 @@ class WorkspaceInstaller:
 
     def _get_existing_installation(self):
         product = PRODUCT_INFO.product_name()
+        me = self._ws.current_user.me()
         if not self._is_global() and not self._is_user():
         # no global or user installation then default install location is global
             self._installation = Installation(self._ws, product, install_folder=self._install_location)
@@ -474,29 +482,30 @@ class WorkspaceInstaller:
         except NotInstalled:
             return False
 
-    def _get_existing_installation(self):
+    def _get_existing_installation(self) -> tuple[Installation, str]:
+        username = self._ws.current_user.me().user_name
         product = PRODUCT_INFO.product_name()
 
         if self._is_global():
             self._installation = Installation.current(self._ws, product)
-            # self._install_location = self._installation.install_folder()
             # global installation is the latest
             if os.environ.get('UCX_FORCE_INSTALL', '').lower() != 'user':
                 # no user installation override then return current to upgrade global install
-                return Installation.assume_global(self._ws, product).load(WorkspaceConfig)
+                return Installation.current(self._ws, product), "existing"
+
             # user installation override
             msg = (
                 "[ADVANCED] UCX is already installed on this workspace. "
                 "Do you want to create a user-specific installation?"
             )
             if self._prompts.confirm(msg):
-                return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
+                return Installation(self._ws, product, install_folder=f"/Users/{username}"), "new"
             raise RuntimeWarning("Existing global install and user installation override, but no confirmation")
 
         # user installation is the latest
         if os.environ.get('UCX_FORCE_INSTALL', '').lower() != 'global':
             # no global installation override then return current to upgrade user install
-            return Installation.assume_user_home(self._ws, product).load(WorkspaceConfig)
+            return Installation.current(self._ws, product), "existing"
 
         # global installation override
         msg = "[ADVANCED] UCX is already installed on this workspace. Do you want to create a global installation?"
